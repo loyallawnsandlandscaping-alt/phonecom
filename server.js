@@ -1,60 +1,63 @@
 // server.js
 import express from "express";
-import { supabase } from "./supabaseClient.js";
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+
+dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 
-// Root
+// --- Supabase Setup ---
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("❌ Missing Supabase credentials. Check your environment variables.");
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// --- API Routes ---
+
+// Health check
 app.get("/", (req, res) => {
-  res.send("✅ Video Conference Backend Running");
+  res.send("🚀 PhoneCom backend is running!");
 });
 
-// Health check: confirms env vars exist
-app.get("/health", (req, res) => {
-  const hasUrl = !!process.env.SUPABASE_URL;
-  const hasKey = !!process.env.SUPABASE_ANON_KEY;
-  res.json({
-    ok: true,
-    supabase_url_present: hasUrl,
-    supabase_key_present: hasKey,
-  });
+// Fetch messages
+app.get("/messages", async (req, res) => {
+  const { data, error } = await supabase.from("messages").select("*").order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-// DB ping: try a simple query to verify DB connectivity
-app.get("/db-ping", async (req, res) => {
-  try {
-    const { error } = await supabase.from("rooms").select("id").limit(1);
-    if (error) {
-      return res.status(500).json({ ok: false, error: error.message });
-    }
-    return res.json({ ok: true, message: "DB reachable ✅" });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e) });
+// Add a new message
+app.post("/messages", async (req, res) => {
+  const { sender, content } = req.body;
+  if (!sender || !content) {
+    return res.status(400).json({ error: "Sender and content are required" });
   }
-});
 
-// (sample) list users
-app.get("/users", async (req, res) => {
-  const { data, error } = await supabase.from("users").select("*");
+  const { data, error } = await supabase.from("messages").insert([{ sender, content }]).select();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json(data[0]);
 });
 
-// (sample) add user
-app.post("/users", async (req, res) => {
-  const { name, email } = req.body || {};
-  if (!name) return res.status(400).json({ error: "name is required" });
-  const { data, error } = await supabase
-    .from("users")
-    .insert([{ name, email }])
-    .select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
+// --- Realtime Subscription ---
+function setupRealtime() {
+  supabase
+    .channel("public:messages")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+      console.log("📩 New message received:", payload.new);
+    })
+    .subscribe();
+}
 
+setupRealtime();
+
+// --- Server Start ---
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
