@@ -20,6 +20,17 @@ app.post('/send', async (req, res) => {
   res.json(data)
 })
 
+// ✅ Fetch all messages (new route)
+app.get('/messages', async (req, res) => {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .order('created_at', { ascending: true })
+
+  if (error) return res.status(400).json({ error: error.message })
+  res.json(data)
+})
+
 // ✅ Realtime subscription (logs to Render console)
 supabase
   .channel('room1')
