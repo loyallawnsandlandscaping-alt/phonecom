@@ -20,7 +20,7 @@ app.post('/send', async (req, res) => {
   res.json(data)
 })
 
-// ✅ Fetch all messages (new route)
+// ✅ Fetch all messages from Supabase
 app.get('/messages', async (req, res) => {
   const { data, error } = await supabase
     .from('messages')
