@@ -1,92 +1,69 @@
-import express from 'express'
-import multer from 'multer'
-import { v2 as cloudinary } from 'cloudinary'
-import { supabase } from './supabaseClient.js'
+// server.js
+import express from "express";
+import multer from "multer";
+import { v2 as cloudinary } from "cloudinary";
+import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
-const app = express()
-app.use(express.json())
+dotenv.config();
+const app = express();
+const upload = multer({ dest: "uploads/" });
 
-// ✅ Multer for handling uploads
-const upload = multer({ dest: 'uploads/' })
+// --- Supabase setup ---
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY // ⚠️ service role key, not anon
+);
 
-// ✅ Cloudinary config
+// --- Cloudinary setup ---
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_URL.split('@')[1], // cloud name comes after '@'
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-})
+});
 
-// ✅ Root route
-app.get('/', (req, res) => {
-  res.send('✅ Server is running and connected to Supabase + Cloudinary')
-})
+// --- Simple health check ---
+app.get("/", (req, res) => {
+  res.send("✅ Server running");
+});
 
-// ✅ Insert a message into Supabase
-app.post('/send', async (req, res) => {
-  const { sender, content } = req.body
-  const { data, error } = await supabase
-    .from('messages')
-    .insert([{ sender, content }])
-
-  if (error) return res.status(400).json({ error: error.message })
-  res.json(data)
-})
-
-// ✅ Fetch all messages from Supabase
-app.get('/messages', async (req, res) => {
-  const { data, error } = await supabase
-    .from('messages')
-    .select('*')
-    .order('created_at', { ascending: true })
-
-  if (error) return res.status(400).json({ error: error.message })
-  res.json(data)
-})
-
-// ✅ Upload annotated image to Cloudinary & store metadata in Supabase
-app.post('/upload', upload.single('file'), async (req, res) => {
+// --- Upload a file ---
+app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: 'annotations',
-    })
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path);
 
-    // Save reference in Supabase
-    const { data, error } = await supabase
-      .from('uploads')
-      .insert([{ url: result.secure_url, public_id: result.public_id }])
+    // Save record in Supabase
+    const { data, error } = await supabase.from("uploads").insert([
+      {
+        url: result.secure_url,
+        public_id: result.public_id,
+        created_at: new Date(),
+      },
+    ]);
 
-    if (error) return res.status(400).json({ error: error.message })
+    if (error) throw error;
 
-    res.json({ url: result.secure_url, id: result.public_id })
+    res.json({ success: true, url: result.secure_url });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error(err);
+    res.status(500).json({ error: "Upload failed" });
   }
-})
+});
 
-// ✅ Save structured annotation data (JSON)
-app.post('/annotation', async (req, res) => {
-  const { user_id, tool, data } = req.body
+// --- List all uploads ---
+app.get("/uploads", async (req, res) => {
+  try {
+    const { data, error } = await supabase.from("uploads").select("*");
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not fetch uploads" });
+  }
+});
 
-  const { error } = await supabase
-    .from('annotations')
-    .insert([{ user_id, tool, data }])
-
-  if (error) return res.status(400).json({ error: error.message })
-  res.json({ success: true })
-})
-
-// ✅ Realtime subscription (logs to Render console)
-supabase
-  .channel('room1')
-  .on(
-    'postgres_changes',
-    { event: 'INSERT', schema: 'public', table: 'messages' },
-    (payload) => {
-      console.log('📩 New message:', payload.new)
-    }
-  )
-  .subscribe()
-
-// ✅ Server listen
-const port = process.env.PORT || 10000
-app.listen(port, () => console.log(`🚀 Server running on port ${port}`))
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`🚀 Server running on port ${port}`);
+});
